@@ -1,6 +1,6 @@
 # Personal Assistant (test-llm)
 
-Assistente personale: **Python + LangChain + FastAPI** (backend) e **Angular** (frontend), con **Ollama** (LLM locale/gratuito).
+Assistente personale: **Python + LangChain + FastAPI** (backend) e **Angular Material** (frontend), con **Ollama** (LLM locale/gratuito).
 
 ## Struttura
 
@@ -11,10 +11,10 @@ test-llm/
 │   ├── requirements.txt
 │   ├── app/              # FastAPI + LangChain
 │   └── data/docs/        # documenti per RAG (futuro)
-└── frontend/             # Angular (da generare con CLI)
+└── frontend/             # Angular 20 + Angular Material
 ```
 
-## Prerequisiti Ollama
+## Prerequisiti
 
 1. Installa Ollama: https://ollama.com
 2. Scarica un modello, ad esempio:
@@ -22,12 +22,32 @@ test-llm/
    ollama pull llama3.1
    ```
 3. Verifica che sia in esecuzione (`ollama list`)
+4. Node.js 20+ per il frontend
 
-## Config
+## Config backend
 
 Copia `backend/.env.example` → `backend/.env` (valori già ok per Ollama locale).
 
-## Prossimi passi
+## Avvio
 
-1. Implementare `app/main.py`, `schemas.py`, `llm.py` (ChatOllama)
-2. Generare Angular in `frontend/` con `ng new`
+Terminale 1 — backend:
+
+```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
+uvicorn app.main:app --reload --port 8000
+```
+
+Terminale 2 — frontend:
+
+```powershell
+cd frontend
+npm start
+```
+
+Poi apri `http://localhost:4200`. La chat chiama `POST http://localhost:8000/chat`.
+
+API utili:
+- `GET /statu-model-server` — health
+- `POST /chat` — `{ "message": "..." }` → `{ "reply": "..." }`
+- Swagger: `http://localhost:8000/docs`

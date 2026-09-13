@@ -1,0 +1,59 @@
+<div class="layout">
+  <mat-toolbar class="toolbar">
+    <mat-icon class="toolbar-icon" aria-hidden="true">smart_toy</mat-icon>
+    <span class="title">Assistente personale</span>
+    <span class="spacer"></span>
+    <span class="model">Ollama · llama3.1</span>
+  </mat-toolbar>
+
+  @if (loading()) {
+    <mat-progress-bar mode="indeterminate" />
+  }
+
+  <div class="messages" #scroller>
+    @if (messages().length === 0) {
+      <div class="empty">
+        <mat-icon class="empty-icon" aria-hidden="true">chat_bubble_outline</mat-icon>
+        <h2>Ciao, come posso aiutarti?</h2>
+        <p>Scrivi un messaggio per parlare con il modello locale.</p>
+      </div>
+    } @else {
+      @for (m of messages(); track $index) {
+        <div class="row" [class.user]="m.role === 'user'" [class.assistant]="m.role === 'assistant'">
+          <div class="bubble">{{ m.content }}</div>
+        </div>
+      }
+      @if (loading()) {
+        <div class="row assistant">
+          <div class="bubble thinking">Sto pensando…</div>
+        </div>
+      }
+    }
+  </div>
+
+  <form class="composer" (ngSubmit)="send()">
+    <mat-form-field appearance="outline" class="field" subscriptSizing="dynamic">
+      <mat-label>Messaggio</mat-label>
+      <textarea
+        matInput
+        name="message"
+        rows="1"
+        cdkTextareaAutosize
+        cdkAutosizeMinRows="1"
+        cdkAutosizeMaxRows="6"
+        [(ngModel)]="draft"
+        [disabled]="loading()"
+        placeholder="Scrivi un messaggio…"
+        (keydown.enter)="onEnter($event)"
+      ></textarea>
+    </mat-form-field>
+    <button
+      mat-mini-fab
+      type="submit"
+      aria-label="Invia"
+      [disabled]="loading() || !draft.trim()"
+    >
+      <mat-icon>send</mat-icon>
+    </button>
+  </form>
+</div>
