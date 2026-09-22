@@ -3,7 +3,7 @@
     <mat-icon class="toolbar-icon" aria-hidden="true">smart_toy</mat-icon>
     <span class="title">Assistente personale</span>
     <span class="spacer"></span>
-    <span class="model">Ollama · llama3.1</span>
+    <span class="model">Ollama · llama3.2:3b</span>
   </mat-toolbar>
 
   @if (loading()) {
@@ -23,7 +23,7 @@
           <div class="bubble">{{ m.content }}</div>
         </div>
       }
-      @if (loading()) {
+      @if (waitingFirstToken()) {
         <div class="row assistant">
           <div class="bubble thinking">Sto pensando…</div>
         </div>

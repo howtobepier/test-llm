@@ -1,5 +1,4 @@
 import { CdkTextareaAutosize } from '@angular/cdk/text-field';
-import { HttpErrorResponse } from '@angular/common/http';
 import {
   Component,
   ElementRef,
@@ -40,6 +39,8 @@ export class Chat {
 
   protected readonly messages = signal<ChatMessage[]>([]);
   protected readonly loading = signal(false);
+  /** True finché non arriva il primo token dello stream. */
+  protected readonly waitingFirstToken = signal(false);
   protected draft = '';
 
   protected send(): void {
@@ -51,24 +52,65 @@ export class Chat {
     this.messages.update((current) => [...current, { role: 'user', content: text }]);
     this.draft = '';
     this.loading.set(true);
+    this.waitingFirstToken.set(true);
     this.scrollToBottom();
 
-    this.chatService.send(text).subscribe({
-      next: (res) => {
-        this.messages.update((current) => [
-          ...current,
-          { role: 'assistant', content: res.reply },
-        ]);
+    this.chatService.stream(text).subscribe({
+      next: (event) => {
+        if (event.type === 'token') {
+          const isFirst = this.waitingFirstToken();
+          if (isFirst) {
+            this.waitingFirstToken.set(false);
+          }
+          this.messages.update((current) => {
+            if (isFirst) {
+              return [...current, { role: 'assistant', content: event.token }];
+            }
+            const next = current.slice();
+            const last = next[next.length - 1];
+            next[next.length - 1] = {
+              role: 'assistant',
+              content: last.content + event.token,
+            };
+            return next;
+          });
+          this.scrollToBottom();
+          return;
+        }
+
+        if (event.type === 'error') {
+          this.snackBar.open(event.message, 'Chiudi', { duration: 6000 });
+          this.messages.update((current) => {
+            const last = current[current.length - 1];
+            if (!this.waitingFirstToken() && last?.role === 'assistant') {
+              const next = current.slice();
+              next[next.length - 1] = {
+                role: 'assistant',
+                content: `Errore: ${event.message}`,
+              };
+              return next;
+            }
+            return [...current, { role: 'assistant', content: `Errore: ${event.message}` }];
+          });
+          this.waitingFirstToken.set(false);
+          this.loading.set(false);
+          this.scrollToBottom();
+          return;
+        }
+
+        // done
+        this.waitingFirstToken.set(false);
         this.loading.set(false);
         this.scrollToBottom();
       },
-      error: (err: HttpErrorResponse) => {
-        const detail = this.errorMessage(err);
+      error: () => {
+        const detail = 'Richiesta fallita. Riprova.';
         this.snackBar.open(detail, 'Chiudi', { duration: 6000 });
         this.messages.update((current) => [
           ...current,
           { role: 'assistant', content: `Errore: ${detail}` },
         ]);
+        this.waitingFirstToken.set(false);
         this.loading.set(false);
         this.scrollToBottom();
       },
@@ -82,17 +124,6 @@ export class Chat {
     }
     keyboardEvent.preventDefault();
     this.send();
-  }
-
-  private errorMessage(err: HttpErrorResponse): string {
-    const detail = err.error?.detail;
-    if (typeof detail === 'string' && detail.trim()) {
-      return detail;
-    }
-    if (err.status === 0) {
-      return 'Backend non raggiungibile. Avvia FastAPI su http://localhost:8000';
-    }
-    return 'Richiesta fallita. Riprova.';
   }
 
   private scrollToBottom(): void {
