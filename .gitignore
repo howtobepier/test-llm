@@ -5,6 +5,22 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+backend/_bench_*.py
+backend/_live_verify.py
+backend/data/*.db
+backend/data/*.db-*
+backend/data/metrics.csv
+backend/vault/raw/*
+backend/vault/wiki/*
+backend/vault/outputs/*
+backend/vault/inbox/*
+backend/vault/notes/*
+backend/vault/daily/*
+backend/vault/projects/*
+!backend/vault/**/.gitkeep
+!backend/vault/wiki/Home.md
+!backend/vault/wiki/preferences.md
+!backend/vault/.obsidian/app.json
 
 # Angular / Node
 frontend/node_modules/

@@ -1,0 +1,980 @@
+import { CdkTextareaAutosize } from '@angular/cdk/text-field';
+import { DatePipe, DecimalPipe } from '@angular/common';
+import {
+  AfterViewInit,
+  Component,
+  ElementRef,
+  NgZone,
+  OnDestroy,
+  OnInit,
+  computed,
+  inject,
+  signal,
+  viewChild,
+} from '@angular/core';
+import { FormsModule } from '@angular/forms';
+import { Subscription } from 'rxjs';
+import { SafeMarkdownPipe } from '../pipes/safe-markdown.pipe';
+import {
+  ActionLogItem,
+  AgendaItem,
+  ChatMessage,
+  ChatService,
+  DashboardData,
+  NoteHit,
+  ReminderItem,
+  RoutineItem,
+  SystemInfo,
+  TodoItem,
+} from '../services/chat';
+
+type VoiceState = 'pronto' | 'ascolto' | 'trascrivo' | 'elaboro' | 'parlo' | 'non_disponibile';
+type LoadState = 'loading' | 'ready' | 'empty' | 'error' | 'offline';
+type SideTab = 'feed' | 'memoria' | 'routine';
+
+interface OrbPoint {
+  x: number;
+  y: number;
+  z: number;
+  phase: number;
+}
+
+const ORB_PALETTE: Record<VoiceState, [number, number, number]> = {
+  pronto: [80, 210, 255],
+  ascolto: [150, 240, 255],
+  trascrivo: [255, 190, 90],
+  elaboro: [255, 190, 90],
+  parlo: [110, 230, 255],
+  non_disponibile: [255, 95, 95],
+};
+
+@Component({
+  selector: 'app-chat',
+  imports: [FormsModule, CdkTextareaAutosize, SafeMarkdownPipe, DatePipe, DecimalPipe],
+  templateUrl: './chat.html',
+  styleUrl: './chat.scss',
+})
+export class Chat implements OnInit, AfterViewInit, OnDestroy {
+  private readonly api = inject(ChatService);
+  private readonly zone = inject(NgZone);
+  private readonly scroller = viewChild<ElementRef<HTMLElement>>('scroller');
+  private readonly orbCanvas = viewChild<ElementRef<HTMLCanvasElement>>('orb');
+
+  protected readonly system = signal<SystemInfo | null>(null);
+  protected readonly logsOpen = signal(true);
+  protected readonly sideTab = signal<SideTab>('feed');
+
+  protected readonly messages = signal<ChatMessage[]>([]);
+  protected readonly loading = signal(false);
+  protected readonly waitingFirstToken = signal(false);
+  protected readonly voiceState = signal<VoiceState>('pronto');
+  protected readonly backendOk = signal(false);
+  protected readonly backendDetail = signal('Verifica…');
+  protected readonly modelOk = signal(false);
+  protected readonly modelLabel = signal('Ollama');
+  protected readonly modelDetail = signal('…');
+  protected readonly clock = signal(new Date());
+  protected readonly toast = signal<string | null>(null);
+
+  protected readonly dayState = signal<LoadState>('loading');
+  protected readonly dayError = signal('');
+  protected readonly priorities = signal<TodoItem[]>([]);
+  protected readonly todos = signal<TodoItem[]>([]);
+  protected readonly agenda = signal<AgendaItem[]>([]);
+  protected readonly reminders = signal<ReminderItem[]>([]);
+
+  protected readonly memoryState = signal<LoadState>('loading');
+  protected readonly memoryError = signal('');
+  protected readonly noteHits = signal<NoteHit[]>([]);
+  protected readonly recentNotes = signal<NoteHit[]>([]);
+  protected readonly searching = signal(false);
+
+  protected readonly routinesState = signal<LoadState>('loading');
+  protected readonly routinesError = signal('');
+  protected readonly routines = signal<RoutineItem[]>([]);
+  protected readonly upcoming = signal<RoutineItem[]>([]);
+  protected readonly actions = signal<ActionLogItem[]>([]);
+  protected readonly actionsState = signal<LoadState>('loading');
+
+  protected readonly settingsOpen = signal(false);
+  protected readonly noteDialogOpen = signal(false);
+  protected readonly todoDialogOpen = signal(false);
+  protected readonly notePreviewOpen = signal(false);
+  protected readonly notePreview = signal<{ title: string; body: string; path: string } | null>(null);
+
+  protected readonly vaultPath = signal('');
+  protected readonly quietHours = signal({ start: '22:00', end: '07:00' });
+  protected readonly sttInfo = signal('…');
+  protected readonly ttsInfo = signal('…');
+  protected readonly quickBusy = signal<string | null>(null);
+
+  protected draft = '';
+  protected memoryQuery = '';
+  protected voiceReply = true;
+  protected reduceMotion = false;
+  protected lastTranscript = '';
+  protected newNoteTitle = '';
+  protected newNoteBody = '';
+  protected newTodoTitle = '';
+  protected newTodoPriority = 2;
+
+  private mediaRecorder: MediaRecorder | null = null;
+  private audioChunks: BlobPart[] = [];
+  private streamSub: Subscription | null = null;
+  private currentRequestId: string | null = null;
+  private audioEl: HTMLAudioElement | null = null;
+  private refreshTimer: ReturnType<typeof setInterval> | null = null;
+  private clockTimer: ReturnType<typeof setInterval> | null = null;
+  private toastTimer: ReturnType<typeof setTimeout> | null = null;
+  private systemTimer: ReturnType<typeof setInterval> | null = null;
+  private speaking = false;
+  private stickToBottom = true;
+  private cancelled = false;
+
+  private orbFrame = 0;
+  private orbTimeout: ReturnType<typeof setTimeout> | null = null;
+  private orbResize: ResizeObserver | null = null;
+  private orbPoints: OrbPoint[] = [];
+  private orbColor: [number, number, number] = [...ORB_PALETTE.pronto];
+  private orbSpeed = 0.15;
+  private orbAmp = 0;
+  private orbTime = 0;
+  private orbLast = 0;
+
+  protected readonly latestTransmission = computed(() => {
+    if (!this.backendOk() && this.backendDetail() !== 'Verifica…') {
+      return 'ERRORE DI SISTEMA: IMPOSSIBILE CONTATTARE IL CORE JARVIS';
+    }
+    const last = [...this.messages()].reverse().find((m) => m.role === 'assistant');
+    if (!last) return 'Tutti i sistemi operativi. In attesa di comandi.';
+    const plain = last.content
+      .replace(/```[\s\S]*?```/g, ' ')
+      .replace(/[#*_`>[\]]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return plain.length > 220 ? plain.slice(0, 217) + '…' : plain || '…';
+  });
+
+  ngOnInit(): void {
+    const motion = localStorage.getItem('jarvis.reduceMotion');
+    this.reduceMotion = motion === '1';
+    document.body.classList.toggle('reduce-motion', this.reduceMotion);
+    const voice = localStorage.getItem('jarvis.voiceReply');
+    this.voiceReply = voice !== '0';
+
+    this.logsOpen.set(localStorage.getItem('jarvis.logsOpen') !== '0');
+
+    this.refreshAll();
+    this.refreshSystem();
+    this.refreshTimer = setInterval(() => this.refreshAll(false), 30000);
+    this.systemTimer = setInterval(() => this.refreshSystem(), 3000);
+    this.clockTimer = setInterval(() => this.clock.set(new Date()), 1000);
+  }
+
+  ngAfterViewInit(): void {
+    const canvas = this.orbCanvas()?.nativeElement;
+    if (!canvas) return;
+    this.orbPoints = this.buildOrbPoints(1700);
+    this.zone.runOutsideAngular(() => {
+      this.orbResize = new ResizeObserver(() => this.resizeOrb(canvas));
+      this.orbResize.observe(canvas);
+      this.resizeOrb(canvas);
+      this.orbFrame = requestAnimationFrame((ts) => this.drawOrb(canvas, ts));
+    });
+  }
+
+  ngOnDestroy(): void {
+    this.streamSub?.unsubscribe();
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
+    if (this.systemTimer) clearInterval(this.systemTimer);
+    if (this.clockTimer) clearInterval(this.clockTimer);
+    if (this.toastTimer) clearTimeout(this.toastTimer);
+    if (this.orbTimeout) clearTimeout(this.orbTimeout);
+    cancelAnimationFrame(this.orbFrame);
+    this.orbResize?.disconnect();
+    this.stopRecorder();
+    this.stopAudio();
+  }
+
+  protected micLabel(): string {
+    switch (this.voiceState()) {
+      case 'ascolto':
+        return 'Ascolto in corso · premi per inviare';
+      case 'trascrivo':
+        return 'Trascrizione in corso…';
+      case 'elaboro':
+        return 'Elaborazione in corso…';
+      case 'parlo':
+        return 'Risposta vocale in corso';
+      case 'non_disponibile':
+        return 'Core non raggiungibile';
+      default:
+        return 'In attesa · premi per parlare';
+    }
+  }
+
+  protected toggleLogs(): void {
+    this.logsOpen.update((v) => !v);
+    localStorage.setItem('jarvis.logsOpen', this.logsOpen() ? '1' : '0');
+    if (this.logsOpen()) this.setTab(this.sideTab());
+  }
+
+  protected setTab(tab: SideTab): void {
+    this.sideTab.set(tab);
+    if (tab === 'feed') {
+      this.stickToBottom = true;
+      setTimeout(() => this.scrollToBottom());
+    }
+  }
+
+  protected canTerminate(): boolean {
+    return this.loading() || this.voiceState() === 'parlo' || this.voiceState() === 'ascolto';
+  }
+
+  private refreshSystem(): void {
+    this.api.system().subscribe({
+      next: (s) => this.system.set(s),
+      error: () => this.system.set(null),
+    });
+  }
+
+  private buildOrbPoints(count: number): OrbPoint[] {
+    const points: OrbPoint[] = [];
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    for (let i = 0; i < count; i++) {
+      const y = 1 - (i / (count - 1)) * 2;
+      const ring = Math.sqrt(1 - y * y);
+      const theta = golden * i;
+      const depth = Math.random() < 0.72 ? 1 : 0.35 + Math.random() * 0.6;
+      points.push({
+        x: Math.cos(theta) * ring * depth,
+        y: y * depth,
+        z: Math.sin(theta) * ring * depth,
+        phase: Math.random() * Math.PI * 2,
+      });
+    }
+    return points;
+  }
+
+  private resizeOrb(canvas: HTMLCanvasElement): void {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
+    const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+  }
+
+  private drawOrb(canvas: HTMLCanvasElement, ts: number): void {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const dt = this.orbLast ? Math.min((ts - this.orbLast) / 1000, 0.1) : 0;
+    this.orbLast = ts;
+
+    const state = this.voiceState();
+    const still = this.reduceMotion;
+    const targetSpeed = { pronto: 0.15, ascolto: 0.35, trascrivo: 0.6, elaboro: 0.9, parlo: 0.3, non_disponibile: 0.04 }[state];
+    const targetAmp = { pronto: 0.015, ascolto: 0.07, trascrivo: 0.03, elaboro: 0.04, parlo: 0.1, non_disponibile: 0 }[state];
+    const k = Math.min(1, dt * 3);
+    this.orbSpeed += (targetSpeed - this.orbSpeed) * k;
+    this.orbAmp += ((still ? 0 : targetAmp) - this.orbAmp) * k;
+    const target = ORB_PALETTE[state];
+    for (let i = 0; i < 3; i++) this.orbColor[i] += (target[i] - this.orbColor[i]) * (still ? 1 : k);
+    if (!still) this.orbTime += dt;
+
+    const w = canvas.width;
+    const h = canvas.height;
+    const cx = w / 2;
+    const cy = h / 2;
+    const radius = Math.min(w, h) * 0.36;
+    const t = this.orbTime;
+    const [r, g, b] = this.orbColor.map(Math.round);
+
+    ctx.clearRect(0, 0, w, h);
+    const glow = ctx.createRadialGradient(cx, cy, radius * 0.1, cx, cy, radius * 1.35);
+    glow.addColorStop(0, `rgba(${r},${g},${b},0.16)`);
+    glow.addColorStop(1, `rgba(${r},${g},${b},0)`);
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, w, h);
+
+    const rot = t * this.orbSpeed * 2;
+    const cosR = Math.cos(rot);
+    const sinR = Math.sin(rot);
+    const tilt = 0.38;
+    const cosT = Math.cos(tilt);
+    const sinT = Math.sin(tilt);
+    const voice = state === 'parlo' ? 0.55 + 0.45 * Math.sin(t * 11) * Math.sin(t * 3.7) : 1;
+    const dot = Math.max(1, Math.min(w, h) / 380);
+
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    for (const p of this.orbPoints) {
+      const wobble = 1 + this.orbAmp * voice * Math.sin(p.phase + t * 6 + p.y * 4);
+      const x1 = p.x * cosR - p.z * sinR;
+      const z1 = p.x * sinR + p.z * cosR;
+      const y2 = p.y * cosT - z1 * sinT;
+      const z2 = p.y * sinT + z1 * cosT;
+      const depth = (z2 + 1) / 2;
+      const persp = 1 + z2 * 0.12;
+      const px = cx + x1 * radius * wobble * persp;
+      const py = cy + y2 * radius * wobble * persp;
+      const size = dot * (0.6 + depth * 1.1);
+      ctx.globalAlpha = 0.12 + depth * 0.7;
+      ctx.fillRect(px - size / 2, py - size / 2, size, size);
+    }
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+
+    const next = () => (this.orbFrame = requestAnimationFrame((n) => this.drawOrb(canvas, n)));
+    if (still) {
+      this.orbLast = 0;
+      this.orbTimeout = setTimeout(next, 400);
+    } else {
+      next();
+    }
+  }
+
+  protected statusLabel(): string {
+    switch (this.voiceState()) {
+      case 'ascolto':
+        return 'Ascolto';
+      case 'trascrivo':
+        return 'Trascrivo';
+      case 'elaboro':
+        return 'Elaboro';
+      case 'parlo':
+        return 'Parlo';
+      case 'non_disponibile':
+        return 'Non disponibile';
+      default:
+        return 'Pronto';
+    }
+  }
+
+  protected refreshAll(showLoading = true): void {
+    if (showLoading && this.dayState() === 'loading') {
+      // already loading
+    } else if (showLoading) {
+      // soft refresh without blanking panels
+    }
+
+    this.api.health().subscribe({
+      next: (h) => {
+        this.backendOk.set(h.ok);
+        this.backendDetail.set(h.ok ? 'Connesso' : h.detail || 'Offline');
+        if (!h.ok) {
+          this.modelOk.set(false);
+          this.modelDetail.set('Backend offline');
+          this.voiceState.set('non_disponibile');
+          this.dayState.set('offline');
+          this.memoryState.set('offline');
+          this.routinesState.set('offline');
+          this.actionsState.set('offline');
+          this.dayError.set('Backend non raggiungibile');
+          this.memoryError.set('Backend non raggiungibile');
+          this.routinesError.set('Backend non raggiungibile');
+        }
+      },
+    });
+
+    this.api.dashboard().subscribe({
+      next: (data) => this.applyDashboard(data),
+      error: (err) => {
+        this.backendOk.set(false);
+        this.backendDetail.set(this.api.errorMessage(err));
+        this.modelOk.set(false);
+        this.dayState.set('error');
+        this.dayError.set(this.api.errorMessage(err));
+        this.memoryState.set('error');
+        this.memoryError.set(this.api.errorMessage(err));
+        this.routinesState.set('error');
+        this.routinesError.set(this.api.errorMessage(err));
+        this.actionsState.set('error');
+        if (!this.loading()) this.voiceState.set('non_disponibile');
+      },
+    });
+  }
+
+  private applyDashboard(data: DashboardData): void {
+    this.backendOk.set(true);
+    this.backendDetail.set('Connesso');
+
+    const model = data.model || {};
+    this.modelOk.set(Boolean(model['available']));
+    this.modelDetail.set(String(model['detail'] ?? ''));
+    this.modelLabel.set(String(data.settings?.['model'] ?? 'Ollama'));
+
+    const todos = (data.todos || []) as TodoItem[];
+    const priorities = (data.priorities || todos.slice(0, 3)) as TodoItem[];
+    const agenda = (data.agenda || []) as AgendaItem[];
+    const reminders = (data.reminders || []) as ReminderItem[];
+    this.todos.set(todos);
+    this.priorities.set(priorities);
+    this.agenda.set(agenda);
+    this.reminders.set(reminders);
+
+    if (!todos.length && !agenda.length && !reminders.length && !priorities.length) {
+      this.dayState.set('empty');
+    } else {
+      this.dayState.set('ready');
+    }
+    this.dayError.set('');
+
+    const notes = (data.recent_notes || []) as NoteHit[];
+    this.recentNotes.set(notes);
+    if (!this.memoryQuery.trim()) {
+      this.noteHits.set(notes);
+      this.memoryState.set(notes.length ? 'ready' : 'empty');
+      this.memoryError.set('');
+    }
+
+    const routines = (data.routines || []) as RoutineItem[];
+    const upcoming = (data.upcoming_routines || []) as RoutineItem[];
+    this.routines.set(routines);
+    this.upcoming.set(upcoming);
+    this.routinesState.set(routines.length || upcoming.length ? 'ready' : 'empty');
+    this.routinesError.set('');
+
+    const actions = (data.recent_actions || []) as ActionLogItem[];
+    this.actions.set(actions);
+    this.actionsState.set(actions.length ? 'ready' : 'empty');
+
+    this.vaultPath.set(String(data.settings?.['vault'] ?? ''));
+    const qh = (data.settings?.['quiet_hours'] as { start?: string; end?: string }) || {};
+    this.quietHours.set({ start: qh.start || '22:00', end: qh.end || '07:00' });
+
+    const stt = data.voice?.stt || {};
+    const tts = data.voice?.tts || {};
+    if (stt['enabled'] === false) {
+      this.sttInfo.set('STT disabilitato in configurazione');
+    } else if (stt['error']) {
+      this.sttInfo.set(`STT: ${stt['error']}`);
+    } else {
+      this.sttInfo.set(
+        `STT locale ${stt['model'] || 'whisper'} (${stt['loaded'] ? 'caricato' : 'on-demand'})`,
+      );
+    }
+    if (tts['enabled'] === false) {
+      this.ttsInfo.set('TTS disabilitato in configurazione');
+    } else if (tts['error']) {
+      this.ttsInfo.set(`TTS: ${tts['error']}`);
+    } else {
+      this.ttsInfo.set(`TTS locale (${tts['engine'] || 'sistema'})`);
+    }
+
+    if (!this.loading() && this.voiceState() === 'non_disponibile') {
+      this.voiceState.set('pronto');
+    }
+  }
+
+  protected onChatScroll(): void {
+    const el = this.scroller()?.nativeElement;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    this.stickToBottom = distance < 80;
+  }
+
+  protected send(text?: string): void {
+    const content = (text ?? this.draft).trim();
+    if (!content || this.loading()) return;
+
+    this.cancelled = false;
+    this.messages.update((current) => [...current, { role: 'user', at: Date.now(), content }]);
+    if (!text) this.draft = '';
+    this.loading.set(true);
+    this.waitingFirstToken.set(true);
+    this.voiceState.set('elaboro');
+    this.stickToBottom = true;
+    this.scrollToBottom();
+
+    const history = this.messages().slice(0, -1).slice(-6);
+    let assistantMode = 'llm';
+    let usedModel = true;
+    let sources: string[] = [];
+
+    this.streamSub?.unsubscribe();
+    this.streamSub = this.api.stream(content, history).subscribe({
+      next: (event) => {
+        if (event.type === 'request_id') {
+          this.currentRequestId = event.requestId;
+          return;
+        }
+        if (event.type === 'meta') {
+          assistantMode = event.mode;
+          usedModel = event.used_model;
+          sources = event.sources ?? [];
+          return;
+        }
+        if (event.type === 'token') {
+          const isFirst = this.waitingFirstToken();
+          if (isFirst) this.waitingFirstToken.set(false);
+          this.messages.update((current) => {
+            if (isFirst) {
+              return [
+                ...current,
+                {
+                  role: 'assistant', at: Date.now(),
+                  content: event.token,
+                  mode: assistantMode,
+                  usedModel,
+                  sources,
+                },
+              ];
+            }
+            const next = current.slice();
+            const last = next[next.length - 1];
+            next[next.length - 1] = {
+              ...last,
+              content: last.content + event.token,
+              mode: assistantMode,
+              usedModel,
+              sources,
+            };
+            return next;
+          });
+          this.scrollToBottom();
+          return;
+        }
+        if (event.type === 'error') {
+          if (!this.cancelled) {
+            this.showToast(event.message);
+            this.messages.update((current) => [
+              ...current,
+              { role: 'assistant', at: Date.now(), content: `Errore: ${event.message}`, usedModel: false },
+            ]);
+          }
+          this.finishRequest();
+          return;
+        }
+        if (event.type === 'done') {
+          if (this.cancelled) {
+            this.finishRequest();
+            return;
+          }
+          const last = this.messages()[this.messages().length - 1];
+          if (!last || last.role !== 'assistant') {
+            this.messages.update((current) => [
+              ...current,
+              {
+                role: 'assistant', at: Date.now(),
+                content: '(nessuna risposta)',
+                mode: assistantMode,
+                usedModel,
+                sources,
+              },
+            ]);
+          }
+          const reply = this.messages()[this.messages().length - 1];
+          if (this.voiceReply && reply?.role === 'assistant' && !this.speaking) {
+            void this.playReply(reply.content);
+          } else {
+            this.voiceState.set(this.backendOk() ? 'pronto' : 'non_disponibile');
+          }
+          this.finishRequest(false);
+          this.refreshAll(false);
+        }
+      },
+      error: (err) => {
+        if (!this.cancelled) {
+          this.showToast(this.api.errorMessage(err));
+        }
+        this.finishRequest();
+      },
+    });
+  }
+
+  protected cancel(): void {
+    const hadActive = this.loading() || this.speaking || this.voiceState() === 'ascolto';
+    if (!hadActive) return;
+
+    this.cancelled = this.loading();
+    if (this.currentRequestId) {
+      this.api.cancel(this.currentRequestId).subscribe();
+    }
+    this.streamSub?.unsubscribe();
+    this.streamSub = null;
+    this.stopRecorder();
+    this.stopAudio();
+    if (this.loading()) {
+      this.showToast('Richiesta interrotta');
+    }
+    this.finishRequest();
+    this.voiceState.set(this.backendOk() ? 'pronto' : 'non_disponibile');
+  }
+
+  protected onEnter(event: Event): void {
+    const keyboardEvent = event as KeyboardEvent;
+    if (keyboardEvent.shiftKey) return;
+    keyboardEvent.preventDefault();
+    this.send();
+  }
+
+  protected searchMemory(): void {
+    const q = this.memoryQuery.trim();
+    if (!q) {
+      this.noteHits.set(this.recentNotes());
+      this.memoryState.set(this.recentNotes().length ? 'ready' : 'empty');
+      return;
+    }
+    this.searching.set(true);
+    this.memoryState.set('loading');
+    this.api.searchNotes(q).subscribe({
+      next: (res) => {
+        const results = res.results || [];
+        this.noteHits.set(results);
+        this.memoryState.set(results.length ? 'ready' : 'empty');
+        this.memoryError.set('');
+        this.searching.set(false);
+      },
+      error: (err) => {
+        this.memoryState.set('error');
+        this.memoryError.set(this.api.errorMessage(err));
+        this.searching.set(false);
+      },
+    });
+  }
+
+  protected openNote(note: NoteHit): void {
+    this.api.openNote(note.path).subscribe({
+      next: (data) => {
+        this.notePreview.set({
+          title: String(data['title'] || note.title),
+          body: String(data['body'] || ''),
+          path: String(data['path'] || note.path),
+        });
+        this.notePreviewOpen.set(true);
+      },
+      error: (err) => this.showToast(this.api.errorMessage(err)),
+    });
+  }
+
+  protected completeTodo(todo: TodoItem): void {
+    this.api.completeTodo(todo.id || todo.title).subscribe({
+      next: () => {
+        this.showToast(`Completata: ${todo.title}`);
+        this.refreshAll(false);
+      },
+      error: (err) => this.showToast(this.api.errorMessage(err)),
+    });
+  }
+
+  protected submitTodo(): void {
+    const title = this.newTodoTitle.trim();
+    if (!title) return;
+    this.api.addTodo(title, this.newTodoPriority).subscribe({
+      next: () => {
+        this.newTodoTitle = '';
+        this.newTodoPriority = 2;
+        this.todoDialogOpen.set(false);
+        this.showToast('Attività aggiunta');
+        this.refreshAll(false);
+      },
+      error: (err) => this.showToast(this.api.errorMessage(err)),
+    });
+  }
+
+  protected submitNote(): void {
+    const title = this.newNoteTitle.trim();
+    const body = this.newNoteBody.trim();
+    if (!title || !body) {
+      this.showToast('Titolo e testo della nota sono obbligatori');
+      return;
+    }
+    this.api.saveNote(title, body).subscribe({
+      next: () => {
+        this.newNoteTitle = '';
+        this.newNoteBody = '';
+        this.noteDialogOpen.set(false);
+        this.showToast('Nota salvata');
+        this.memoryQuery = title;
+        this.searchMemory();
+        this.refreshAll(false);
+      },
+      error: (err) => this.showToast(this.api.errorMessage(err)),
+    });
+  }
+
+  protected runQuick(action: 'briefing' | 'plan' | 'note' | 'evening'): void {
+    if (action === 'note') {
+      this.noteDialogOpen.set(true);
+      return;
+    }
+    if (this.quickBusy()) return;
+    this.quickBusy.set(action);
+    const done = () => this.quickBusy.set(null);
+    if (action === 'briefing') {
+      this.api.briefing().subscribe({
+        next: (res) => {
+          const md = String(res.data?.['markdown'] || res.summary);
+          this.messages.update((m) => [
+            ...m,
+            { role: 'user', at: Date.now(), content: 'Briefing' },
+            { role: 'assistant', at: Date.now(), content: md, usedModel: false, mode: 'briefing' },
+          ]);
+          this.showToast(res.summary || 'Briefing pronto');
+          this.stickToBottom = true;
+          this.scrollToBottom();
+          this.refreshAll(false);
+          done();
+        },
+        error: (err) => {
+          this.showToast(this.api.errorMessage(err));
+          done();
+        },
+      });
+      return;
+    }
+    if (action === 'plan') {
+      this.api.planToday().subscribe({
+        next: (res) => {
+          const items = ((res.data?.['priorities'] as TodoItem[]) || []).map(
+            (p) => `- [P${p.priority}] ${p.title}`,
+          );
+          const text = items.length
+            ? `Priorità del giorno:\n${items.join('\n')}`
+            : res.summary || 'Nessuna priorità da impostare';
+          this.messages.update((m) => [
+            ...m,
+            { role: 'user', at: Date.now(), content: 'Pianifica oggi' },
+            { role: 'assistant', at: Date.now(), content: text, usedModel: false, mode: 'daily_priorities' },
+          ]);
+          this.showToast(res.summary || 'Piano aggiornato');
+          this.stickToBottom = true;
+          this.scrollToBottom();
+          this.refreshAll(false);
+          done();
+        },
+        error: (err) => {
+          this.showToast(this.api.errorMessage(err));
+          done();
+        },
+      });
+      return;
+    }
+    this.api.eveningSummary().subscribe({
+      next: (res) => {
+        const md = String(res.data?.['markdown'] || res.summary);
+        this.messages.update((m) => [
+          ...m,
+          { role: 'user', at: Date.now(), content: 'Riepilogo serale' },
+          { role: 'assistant', at: Date.now(), content: md, usedModel: false, mode: 'evening_summary' },
+        ]);
+        this.showToast(res.summary || 'Riepilogo salvato');
+        this.stickToBottom = true;
+        this.scrollToBottom();
+        this.refreshAll(false);
+        done();
+      },
+      error: (err) => {
+        this.showToast(this.api.errorMessage(err));
+        done();
+      },
+    });
+  }
+
+  protected runRoutine(r: RoutineItem): void {
+    if (!r.id || this.quickBusy()) return;
+    this.quickBusy.set(r.id);
+    this.api.runRoutine(r.id).subscribe({
+      next: (res) => {
+        this.showToast(res.ok ? res.summary : res.error || res.summary || 'Routine fallita');
+        this.refreshAll(false);
+        this.quickBusy.set(null);
+      },
+      error: (err) => {
+        this.showToast(this.api.errorMessage(err));
+        this.quickBusy.set(null);
+      },
+    });
+  }
+
+  protected formatWhen(iso?: string | null): string {
+    if (!iso) return '';
+    try {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return iso;
+      return d.toLocaleString('it-IT', {
+        weekday: 'short',
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return iso;
+    }
+  }
+
+  protected formatTime(iso?: string | null): string {
+    if (!iso) return '';
+    try {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return iso.slice(11, 16) || iso;
+      return d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return iso;
+    }
+  }
+
+  protected routineSchedule(r: RoutineItem): string {
+    if (r.when) return this.formatWhen(r.when);
+    const h = r.hour ?? 0;
+    const m = r.minute ?? 0;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  }
+
+  protected async toggleMic(): Promise<void> {
+    if (this.voiceState() === 'ascolto') {
+      this.stopRecorder();
+      return;
+    }
+    if (this.speaking) this.stopAudio();
+    if (this.loading()) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      this.showToast('Microfono non supportato in questo browser.');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.audioChunks = [];
+      const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+      this.mediaRecorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      this.mediaRecorder.ondataavailable = (ev) => {
+        if (ev.data.size > 0) this.audioChunks.push(ev.data);
+      };
+      this.mediaRecorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const type = this.mediaRecorder?.mimeType || mime || 'audio/webm';
+        const blob = new Blob(this.audioChunks, { type });
+        void this.handleRecording(blob, type.includes('wav') ? 'audio.wav' : 'audio.webm');
+      };
+      this.mediaRecorder.start();
+      this.voiceState.set('ascolto');
+      setTimeout(() => {
+        if (this.voiceState() === 'ascolto') this.stopRecorder();
+      }, 30000);
+    } catch {
+      this.showToast('Permesso microfono negato o dispositivo assente.');
+      this.voiceState.set(this.backendOk() ? 'pronto' : 'non_disponibile');
+    }
+  }
+
+  private stopRecorder(): void {
+    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+      this.mediaRecorder.stop();
+    }
+    this.mediaRecorder = null;
+  }
+
+  private async handleRecording(blob: Blob, filename: string): Promise<void> {
+    if (blob.size < 800) {
+      this.showToast('Registrazione troppo corta o silenziosa.');
+      this.voiceState.set(this.backendOk() ? 'pronto' : 'non_disponibile');
+      return;
+    }
+    this.voiceState.set('trascrivo');
+    this.api.transcribe(blob, filename).subscribe({
+      next: (res) => {
+        const text = (res.text || '').trim();
+        if (!text) {
+          this.showToast('Trascrizione vuota.');
+          this.voiceState.set(this.backendOk() ? 'pronto' : 'non_disponibile');
+          return;
+        }
+        this.lastTranscript = text;
+        this.draft = text;
+        this.send(text);
+      },
+      error: (err) => {
+        this.showToast(this.api.errorMessage(err));
+        this.voiceState.set(this.backendOk() ? 'pronto' : 'non_disponibile');
+      },
+    });
+  }
+
+  private async playReply(text: string): Promise<void> {
+    const clean = text.replace(/\n{2,}/g, '. ').slice(0, 500);
+    if (!clean.trim()) {
+      this.voiceState.set('pronto');
+      return;
+    }
+    this.speaking = true;
+    this.voiceState.set('parlo');
+    this.api.speak(clean).subscribe({
+      next: (blob) => {
+        this.stopAudioPlaybackOnly();
+        const url = URL.createObjectURL(blob);
+        this.audioEl = new Audio(url);
+        this.audioEl.onended = () => {
+          URL.revokeObjectURL(url);
+          this.speaking = false;
+          this.voiceState.set('pronto');
+        };
+        void this.audioEl.play().catch(() => {
+          this.speaking = false;
+          this.voiceState.set('pronto');
+        });
+      },
+      error: (err) => {
+        this.speaking = false;
+        this.voiceState.set('pronto');
+        this.showToast(this.api.errorMessage(err));
+      },
+    });
+  }
+
+  private stopAudioPlaybackOnly(): void {
+    if (this.audioEl) {
+      this.audioEl.pause();
+      this.audioEl = null;
+    }
+  }
+
+  protected stopAudio(): void {
+    this.stopAudioPlaybackOnly();
+    this.api.stopSpeak().subscribe();
+    this.speaking = false;
+    if (this.voiceState() === 'parlo') {
+      this.voiceState.set(this.backendOk() ? 'pronto' : 'non_disponibile');
+    }
+  }
+
+  protected saveSettings(): void {
+    localStorage.setItem('jarvis.reduceMotion', this.reduceMotion ? '1' : '0');
+    localStorage.setItem('jarvis.voiceReply', this.voiceReply ? '1' : '0');
+    document.body.classList.toggle('reduce-motion', this.reduceMotion);
+    this.showToast('Impostazioni salvate');
+  }
+
+  protected closeDialogs(): void {
+    this.settingsOpen.set(false);
+    this.noteDialogOpen.set(false);
+    this.todoDialogOpen.set(false);
+    this.notePreviewOpen.set(false);
+  }
+
+  private showToast(msg: string): void {
+    this.toast.set(msg);
+    if (this.toastTimer) clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => this.toast.set(null), 4500);
+  }
+
+  private finishRequest(resetVoice = true): void {
+    this.waitingFirstToken.set(false);
+    this.loading.set(false);
+    this.currentRequestId = null;
+    if (resetVoice && !this.speaking) {
+      this.voiceState.set(this.backendOk() ? 'pronto' : 'non_disponibile');
+    }
+    this.scrollToBottom();
+  }
+
+  private scrollToBottom(): void {
+    if (!this.stickToBottom) return;
+    queueMicrotask(() => {
+      const el = this.scroller()?.nativeElement;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+  }
+}

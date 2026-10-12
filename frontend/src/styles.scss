@@ -1,31 +1,28 @@
-@use '@angular/material' as mat;
+:root {
+  --jarvis-bg: #02060c;
+  --jarvis-accent: #3de0ff;
+  --jarvis-amber: #e0a84a;
+  --jarvis-text: #e8f1f8;
+}
 
-html {
-  @include mat.theme((
-    color: (
-      primary: mat.$azure-palette,
-      tertiary: mat.$blue-palette,
-    ),
-    typography: Roboto,
-    density: 0,
-  ));
+html,
+body {
   height: 100%;
+  margin: 0;
 }
 
 body {
-  color-scheme: light;
-  background-color: var(--mat-sys-surface);
-  color: var(--mat-sys-on-surface);
-  font: var(--mat-sys-body-medium);
-  margin: 0;
-  height: 100%;
-  font-family: Roboto, "Helvetica Neue", sans-serif;
+  background-color: var(--jarvis-bg);
+  color: var(--jarvis-text);
+  font-family: 'Exo 2', 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
 app-root {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-height: 100%;
 }
 
 app-chat {
@@ -33,4 +30,21 @@ app-chat {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+code,
+.mono {
+  font-family: 'JetBrains Mono', Consolas, monospace;
+}
+
+*:focus-visible {
+  outline: 2px solid rgba(61, 224, 255, 0.55);
+  outline-offset: 2px;
+}
+
+body.reduce-motion *,
+body.reduce-motion *::before,
+body.reduce-motion *::after {
+  animation: none !important;
+  transition: none !important;
 }

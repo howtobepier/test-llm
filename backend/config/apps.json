@@ -1,0 +1,22 @@
+{
+  "apps": [
+    {
+      "id": "notepad",
+      "name": "Blocco note",
+      "aliases": ["blocco note", "notepad", "editor"],
+      "path": "notepad.exe"
+    },
+    {
+      "id": "explorer",
+      "name": "Esplora file",
+      "aliases": ["esplora file", "explorer", "file"],
+      "path": "explorer.exe"
+    },
+    {
+      "id": "calc",
+      "name": "Calcolatrice",
+      "aliases": ["calcolatrice", "calc"],
+      "path": "calc.exe"
+    }
+  ]
+}

@@ -1,0 +1,542 @@
+<div
+  class="hud"
+  [class.reduce-motion]="reduceMotion"
+  [class.logs-hidden]="!logsOpen()"
+  [attr.data-state]="voiceState()"
+>
+  <!-- TOP BAR -->
+  <header class="hud-top">
+    <div class="id-chip">
+      <span class="led" [class.ok]="backendOk()" aria-hidden="true"></span>
+      <div>
+        <h1 class="id-name">JARVIS // CORE LOCALE</h1>
+        <p class="id-sub">
+          {{ backendOk() ? 'SYS_ONLINE' : 'SYS_OFFLINE' }} // {{ modelOk() ? 'MODEL_READY' : 'MODEL_DOWN' }} //
+          VOICE {{ voiceState() === 'non_disponibile' ? 'N/D' : 'PTT' }}
+        </p>
+      </div>
+    </div>
+
+    <div class="top-actions">
+      <button type="button" class="hud-btn" (click)="toggleLogs()" [attr.aria-pressed]="logsOpen()">
+        {{ logsOpen() ? 'Nascondi log' : 'Mostra log' }}
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          @if (logsOpen()) {
+            <path fill="currentColor" d="M12 7a5 5 0 0 1 5 5c0 .6-.1 1.2-.3 1.7l2.9 2.9A11.8 11.8 0 0 0 23 12c-1.7-4.4-6-7.5-11-7.5-1.4 0-2.7.3-4 .7l2.2 2.2c.5-.2 1.1-.4 1.8-.4ZM2 4.3l2.3 2.3.4.4A11.8 11.8 0 0 0 1 12c1.7 4.4 6 7.5 11 7.5 1.5 0 3-.3 4.4-.8l.4.4 2.9 2.9 1.3-1.3L3.3 3 2 4.3Zm5.5 5.5 1.6 1.6-.1.6a3 3 0 0 0 3 3l.6-.1 1.6 1.6A5 5 0 0 1 7.5 9.8Z" />
+          } @else {
+            <path fill="currentColor" d="M12 4.5C7 4.5 2.7 7.6 1 12c1.7 4.4 6 7.5 11 7.5s9.3-3.1 11-7.5c-1.7-4.4-6-7.5-11-7.5ZM12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10Zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z" />
+          }
+        </svg>
+      </button>
+      <button type="button" class="hud-btn" aria-label="Impostazioni" (click)="settingsOpen.set(true)">
+        Config
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.03 7.03 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.5.42l-.36 2.54c-.58.23-1.13.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.7 8.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.82 14.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.23.4.32.63.22l2.39-.96c.5.4 1.05.72 1.63.94l.36 2.54c.05.24.26.42.5.42h3.8c.24 0 .45-.18.5-.42l.36-2.54c.58-.22 1.13-.54 1.63-.94l2.39.96c.23.1.5 0 .63-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"
+          />
+        </svg>
+      </button>
+      <button type="button" class="hud-btn danger" [disabled]="!canTerminate()" (click)="cancel()">
+        Termina
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4l5.6 5.6L5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6L19 6.4Z" />
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="hud-grid">
+    <!-- SINISTRA -->
+    <aside class="col-left">
+      <section class="hud-panel" aria-labelledby="clock-title">
+        <header class="hp-head">
+          <h2 id="clock-title"><span class="hp-dot"></span>JARVIS // TEMPORAL_SYNC</h2>
+          <span class="hp-tag">CHRONO_LOCK</span>
+        </header>
+        <div class="hp-card clock-card">
+          <div>
+            <span class="lbl">Timestamp di sistema</span>
+            <time class="clock-time" [attr.datetime]="clock().toISOString()">
+              {{ clock() | date: 'HH:mm:ss' }}
+            </time>
+            <span class="clock-date">{{ clock() | date: 'EEEE d MMMM y' : undefined : 'it-IT' }}</span>
+          </div>
+          <span class="sync-ring" aria-hidden="true"><span></span></span>
+        </div>
+      </section>
+
+      <section class="hud-panel" aria-labelledby="hw-title">
+        <header class="hp-head">
+          <h2 id="hw-title"><span class="hp-dot"></span>SYS_HARDWARE</h2>
+          <span class="hp-tag">TELEMETRIA</span>
+        </header>
+        @if (system(); as s) {
+          <div class="hp-card meter">
+            <div class="meter-row">
+              <span class="lbl">CPU ({{ s.cpu_cores }} core)</span>
+              <span class="val">{{ s.cpu_percent | number: '1.1-1' }}%</span>
+            </div>
+            <div class="bar" [class.hot]="s.cpu_percent > 85"><span [style.width.%]="s.cpu_percent"></span></div>
+          </div>
+          <div class="hp-card meter">
+            <div class="meter-row">
+              <span class="lbl">RAM ({{ s.ram_total_gb }} GB)</span>
+              <span class="val">{{ s.ram_percent | number: '1.1-1' }}%</span>
+            </div>
+            <div class="bar" [class.hot]="s.ram_percent > 85"><span [style.width.%]="s.ram_percent"></span></div>
+          </div>
+          <div class="hp-card meter">
+            <div class="meter-row">
+              <span class="lbl">Disco</span>
+              <span class="val">{{ s.disk_percent | number: '1.1-1' }}%</span>
+            </div>
+            <div class="bar" [class.hot]="s.disk_percent > 90"><span [style.width.%]="s.disk_percent"></span></div>
+            <span class="sub">{{ s.disk_free_gb }} GB liberi</span>
+          </div>
+        } @else {
+          <div class="hp-card meter">
+            <div class="meter-row">
+              <span class="lbl">Telemetria</span>
+              <span class="val">N/D</span>
+            </div>
+            <div class="bar"><span style="width: 0"></span></div>
+            <span class="sub">Nessun dato dal backend</span>
+          </div>
+        }
+        <dl class="kv">
+          <div>
+            <dt>Backend</dt>
+            <dd [class.ok]="backendOk()" [class.bad]="!backendOk()">{{ backendOk() ? 'ONLINE' : 'OFFLINE' }}</dd>
+          </div>
+          <div [title]="modelDetail()">
+            <dt>Modello</dt>
+            <dd [class.ok]="modelOk()" [class.bad]="!modelOk()">{{ modelLabel() }}</dd>
+          </div>
+          <div>
+            <dt>Host</dt>
+            <dd>{{ system()?.host || '127.0.0.1' }}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="hud-panel grow" aria-labelledby="day-title">
+        <header class="hp-head">
+          <h2 id="day-title"><span class="hp-dot"></span>DAY_OPS</h2>
+          <button type="button" class="hp-tag as-btn" [disabled]="!backendOk()" (click)="todoDialogOpen.set(true)">
+            + Attività
+          </button>
+        </header>
+
+        <div class="hp-scroll">
+          @if (dayState() === 'loading') {
+            <p class="panel-msg">Caricamento…</p>
+          } @else if (dayState() === 'offline' || dayState() === 'error') {
+            <p class="panel-msg error">{{ dayError() || 'Dati giornata non disponibili' }}</p>
+          } @else {
+            <h3 class="sec">Priorità</h3>
+            @if (!priorities().length) {
+              <p class="panel-msg">Nessuna priorità — aggiungi un’attività.</p>
+            } @else {
+              <ol class="rows">
+                @for (p of priorities(); track p.id || p.title) {
+                  <li>
+                    <span class="chip amber">P{{ p.priority }}</span>
+                    <span>{{ p.title }}</span>
+                  </li>
+                }
+              </ol>
+            }
+
+            <h3 class="sec">Attività</h3>
+            @if (!todos().length) {
+              <p class="panel-msg">Nessuna attività aperta.</p>
+            } @else {
+              <ul class="rows">
+                @for (t of todos(); track t.id || t.title) {
+                  <li>
+                    <label class="todo-item">
+                      <input
+                        type="checkbox"
+                        [checked]="false"
+                        [disabled]="!backendOk()"
+                        (change)="completeTodo(t)"
+                        [attr.aria-label]="'Completa ' + t.title"
+                      />
+                      <span class="todo-title">{{ t.title }}</span>
+                      <span class="chip amber">P{{ t.priority }}</span>
+                    </label>
+                  </li>
+                }
+              </ul>
+            }
+
+            <h3 class="sec">Agenda</h3>
+            @if (!agenda().length) {
+              <p class="panel-msg">Nessun appuntamento.</p>
+            } @else {
+              <ul class="rows">
+                @for (e of agenda(); track e.id || e.title + e.starts_at) {
+                  <li>
+                    <span class="chip">{{ formatTime(e.starts_at) }}</span>
+                    <span>{{ e.title }}</span>
+                  </li>
+                }
+              </ul>
+            }
+
+            <h3 class="sec">Promemoria</h3>
+            @if (!reminders().length) {
+              <p class="panel-msg">Nessun promemoria aperto.</p>
+            } @else {
+              <ul class="rows">
+                @for (r of reminders(); track r.id || r.title + r.due_at) {
+                  <li>
+                    <span class="chip">{{ formatWhen(r.due_at) }}</span>
+                    <span>{{ r.title }}</span>
+                  </li>
+                }
+              </ul>
+            }
+          }
+        </div>
+      </section>
+    </aside>
+
+    <!-- CENTRO -->
+    <main class="col-center">
+      <section class="transmission" aria-live="polite" [class.error]="!backendOk() && backendDetail() !== 'Verifica…'">
+        <span class="tx-label">Ultima trasmissione</span>
+        <p class="tx-text">{{ latestTransmission() }}</p>
+        @if (lastTranscript) {
+          <p class="tx-sub">Riconosciuto: “{{ lastTranscript }}”</p>
+        }
+      </section>
+
+      <div class="orb-stage">
+        <div class="orb-box" [attr.data-state]="voiceState()" aria-hidden="true">
+          <svg class="orb-rings" viewBox="0 0 400 400">
+            <circle class="r r1" cx="200" cy="200" r="192" />
+            <circle class="r r2" cx="200" cy="200" r="176" />
+            <circle class="r r3" cx="200" cy="200" r="160" />
+          </svg>
+          <canvas #orb class="orb-canvas"></canvas>
+        </div>
+      </div>
+
+      <div class="mic-dock">
+        <button
+          type="button"
+          class="mic-btn"
+          [class.active]="voiceState() === 'ascolto'"
+          [attr.aria-label]="voiceState() === 'ascolto' ? 'Ferma registrazione' : 'Parla con JARVIS'"
+          [disabled]="loading() && voiceState() !== 'ascolto'"
+          (click)="toggleMic()"
+        >
+          <span class="mic-halo" aria-hidden="true"></span>
+          <span class="mic-core">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"
+              />
+            </svg>
+          </span>
+        </button>
+        <div class="mic-status" [attr.data-state]="voiceState()">
+          <span class="led" aria-hidden="true"></span>{{ micLabel() }}
+        </div>
+      </div>
+
+      <nav class="quickbar" aria-label="Azioni rapide">
+        <button type="button" class="q" [disabled]="!!quickBusy() || !backendOk()" (click)="runQuick('briefing')">Briefing</button>
+        <button type="button" class="q" [disabled]="!!quickBusy() || !backendOk()" (click)="runQuick('plan')">Pianifica oggi</button>
+        <button type="button" class="q" [disabled]="!backendOk()" (click)="runQuick('note')">Salva nota</button>
+        <button type="button" class="q" [disabled]="!!quickBusy() || !backendOk()" (click)="runQuick('evening')">Riepilogo serale</button>
+      </nav>
+
+      <form class="command-bar" (ngSubmit)="send()">
+        <label class="sr-only" for="msg-input">Comando</label>
+        <textarea
+          id="msg-input"
+          name="message"
+          rows="1"
+          cdkTextareaAutosize
+          cdkAutosizeMinRows="1"
+          cdkAutosizeMaxRows="4"
+          [(ngModel)]="draft"
+          [disabled]="loading()"
+          placeholder="Richiesta diretta o comando di sistema…"
+          (keydown.enter)="onEnter($event)"
+        ></textarea>
+        <button
+          type="button"
+          class="cb-icon"
+          [class.on]="voiceReply"
+          [attr.aria-label]="voiceReply ? 'Risposte vocali attive' : 'Risposte vocali disattive'"
+          [attr.aria-pressed]="voiceReply"
+          [title]="voiceReply ? 'Risposte vocali attive' : 'Risposte vocali disattive'"
+          (click)="voiceReply = !voiceReply; saveSettings()"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            @if (voiceReply) {
+              <path fill="currentColor" d="M3 9v6h4l5 5V4L7 9H3Zm13.5 3A4.5 4.5 0 0 0 14 8.97v6.06A4.47 4.47 0 0 0 16.5 12ZM14 3.23v2.06a7 7 0 0 1 0 13.42v2.06a9 9 0 0 0 0-17.54Z" />
+            } @else {
+              <path fill="currentColor" d="M16.5 12A4.5 4.5 0 0 0 14 7.97v2.21l2.45 2.45c.03-.2.05-.41.05-.63Zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.8 8.8 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71ZM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3ZM12 4 9.91 6.09 12 8.18V4Z" />
+            }
+          </svg>
+        </button>
+        @if (loading()) {
+          <button type="button" class="cb-exec stop" (click)="cancel()">Interrompi</button>
+        } @else {
+          <button type="submit" class="cb-exec" [disabled]="!draft.trim()">Esegui</button>
+        }
+      </form>
+    </main>
+
+    <!-- DESTRA -->
+    @if (logsOpen()) {
+      <aside class="col-right hud-panel" aria-labelledby="feed-title">
+        <header class="hp-head">
+          <h2 id="feed-title"><span class="hp-dot"></span>JARVIS // TERMINAL_FEED</h2>
+          <span class="hp-tag live">LIVE</span>
+        </header>
+        <div class="tabs" role="tablist">
+          <button type="button" role="tab" [class.on]="sideTab() === 'feed'" [attr.aria-selected]="sideTab() === 'feed'" (click)="setTab('feed')">Feed</button>
+          <button type="button" role="tab" [class.on]="sideTab() === 'memoria'" [attr.aria-selected]="sideTab() === 'memoria'" (click)="setTab('memoria')">Memoria</button>
+          <button type="button" role="tab" [class.on]="sideTab() === 'routine'" [attr.aria-selected]="sideTab() === 'routine'" (click)="setTab('routine')">Routine</button>
+        </div>
+
+        @switch (sideTab()) {
+          @case ('feed') {
+            <div class="feed" #scroller (scroll)="onChatScroll()" role="log" aria-live="polite">
+              @if (messages().length === 0) {
+                <article class="entry ai">
+                  <header><span class="who"><span class="hp-dot"></span>JARVIS_AI</span><time>{{ clock() | date: 'HH:mm:ss' }}</time></header>
+                  <p>
+                    {{ backendOk() ? 'Tutti i sistemi online e operativi.' : 'Core non raggiungibile.' }}
+                    Le funzioni locali (note, attività, agenda) restano disponibili anche se il modello è lento o offline.
+                  </p>
+                </article>
+              }
+              @for (m of messages(); track $index) {
+                <article class="entry" [class.user]="m.role === 'user'" [class.ai]="m.role === 'assistant'">
+                  <header>
+                    @if (m.role === 'user') {
+                      <span class="who">&gt; USER_COMMAND</span>
+                    } @else {
+                      <span class="who"><span class="hp-dot"></span>JARVIS_AI</span>
+                    }
+                    @if (m.at) {
+                      <time>{{ m.at | date: 'HH:mm:ss' }}</time>
+                    }
+                  </header>
+                  @if (m.role === 'assistant' && m.mode) {
+                    <div class="badge">{{ m.usedModel ? 'modello' : 'diretto' }} · {{ m.mode }}</div>
+                  }
+                  <div class="text" [innerHTML]="m.content | safeMarkdown"></div>
+                  @if (m.sources?.length) {
+                    <div class="sources">Fonti: {{ m.sources!.join(' · ') }}</div>
+                  }
+                </article>
+              }
+              @if (waitingFirstToken()) {
+                <article class="entry ai thinking">
+                  <header><span class="who"><span class="hp-dot"></span>JARVIS_AI</span></header>
+                  <p>Elaborazione<span class="dots"><span>.</span><span>.</span><span>.</span></span></p>
+                </article>
+              }
+            </div>
+          }
+
+          @case ('memoria') {
+            <div class="hp-scroll">
+              <form class="search-row" (ngSubmit)="searchMemory()">
+                <label class="sr-only" for="mem-q">Cerca nelle note</label>
+                <input id="mem-q" name="mq" [(ngModel)]="memoryQuery" placeholder="Cerca nelle note…" [disabled]="!backendOk()" />
+                <button type="submit" class="hp-tag as-btn" [disabled]="!backendOk() || searching()">Cerca</button>
+                <button type="button" class="hp-tag as-btn" [disabled]="!backendOk()" (click)="noteDialogOpen.set(true)">+ Nota</button>
+              </form>
+
+              @if (memoryState() === 'loading') {
+                <p class="panel-msg">Caricamento…</p>
+              } @else if (memoryState() === 'error' || memoryState() === 'offline') {
+                <p class="panel-msg error">{{ memoryError() || 'Memoria non disponibile' }}</p>
+              } @else if (memoryState() === 'empty') {
+                <p class="panel-msg">{{ memoryQuery.trim() ? 'Nessuna nota trovata.' : 'Nessuna nota recente nel vault.' }}</p>
+              } @else {
+                <ul class="note-list">
+                  @for (n of noteHits(); track n.path) {
+                    <li>
+                      <button type="button" class="note-link" (click)="openNote(n)">
+                        <strong>{{ n.title }}</strong>
+                        <span class="path">{{ n.relative || n.path }}</span>
+                        @if (n.snippet) {
+                          <span class="snip">{{ n.snippet }}</span>
+                        }
+                      </button>
+                    </li>
+                  }
+                </ul>
+              }
+            </div>
+          }
+
+          @case ('routine') {
+            <div class="hp-scroll">
+              <h3 class="sec">Routine</h3>
+              @if (routinesState() === 'loading') {
+                <p class="panel-msg">Caricamento…</p>
+              } @else if (routinesState() === 'error' || routinesState() === 'offline') {
+                <p class="panel-msg error">{{ routinesError() || 'Routine non disponibili' }}</p>
+              } @else if (routinesState() === 'empty') {
+                <p class="panel-msg">Nessuna routine in <code>routines.json</code>.</p>
+              } @else {
+                <ul class="rows routine-list">
+                  @for (r of routines(); track r.id) {
+                    <li>
+                      <div class="grow">
+                        <strong>{{ r.name || r.id }}</strong>
+                        <span class="sub">{{ routineSchedule(r) }} · {{ r.enabled === false ? 'off' : 'on' }}</span>
+                      </div>
+                      <button
+                        type="button"
+                        class="hp-tag as-btn"
+                        [disabled]="!backendOk() || !!quickBusy() || r.enabled === false"
+                        (click)="runRoutine(r)"
+                      >
+                        Esegui
+                      </button>
+                    </li>
+                  }
+                </ul>
+                @if (upcoming().length) {
+                  <p class="panel-msg">Prossima: {{ upcoming()[0].name || upcoming()[0].id }} · {{ formatWhen(upcoming()[0].when) }}</p>
+                }
+              }
+
+              <h3 class="sec">Ultime azioni</h3>
+              @if (actionsState() === 'loading') {
+                <p class="panel-msg">Caricamento…</p>
+              } @else if (actionsState() === 'error' || actionsState() === 'offline') {
+                <p class="panel-msg error">Log azioni non disponibile</p>
+              } @else if (actionsState() === 'empty') {
+                <p class="panel-msg">Nessuna azione registrata.</p>
+              } @else {
+                <ul class="rows action-list">
+                  @for (a of actions(); track $index) {
+                    <li [class]="a.status">
+                      <span class="chip st">{{ a.status }}</span>
+                      <span>{{ a.summary }}</span>
+                    </li>
+                  }
+                </ul>
+              }
+            </div>
+          }
+        }
+
+        <footer class="hp-foot">— canale locale · 127.0.0.1 —</footer>
+      </aside>
+    }
+  </div>
+
+  @if (toast()) {
+    <div class="toast" role="status">{{ toast() }}</div>
+  }
+
+  <!-- Impostazioni -->
+  @if (settingsOpen()) {
+    <div class="modal-backdrop" (click)="settingsOpen.set(false)"></div>
+    <dialog class="modal" open aria-labelledby="settings-title">
+      <header class="modal-head">
+        <h2 id="settings-title"><span class="hp-dot"></span>CONFIGURAZIONE</h2>
+        <button type="button" class="x-btn" aria-label="Chiudi" (click)="settingsOpen.set(false)">×</button>
+      </header>
+      <div class="modal-body">
+        <p><strong>Modello</strong>: {{ modelLabel() }} — {{ modelOk() ? 'attivo' : 'non disponibile' }}</p>
+        <p class="muted mono">{{ modelDetail() }}</p>
+        <p><strong>Memoria (vault)</strong></p>
+        <p class="mono path-box">{{ vaultPath() || 'non disponibile' }}</p>
+        <p class="muted">Percorso validato dal backend. Modifica <span class="mono">JARVIS_VAULT_DIR</span> in <span class="mono">backend/.env</span>.</p>
+        <p><strong>Voce</strong></p>
+        <p class="muted">{{ sttInfo() }}</p>
+        <p class="muted">{{ ttsInfo() }}</p>
+        <p class="muted">Selezione voce/dispositivo: non esposta dal motore locale attuale.</p>
+        <p><strong>Ore silenziose</strong>: {{ quietHours().start }} – {{ quietHours().end }}</p>
+        <label class="check">
+          <input type="checkbox" [(ngModel)]="voiceReply" name="vr" />
+          Risposte vocali
+        </label>
+        <label class="check">
+          <input type="checkbox" [(ngModel)]="reduceMotion" name="rm" />
+          Riduci animazioni
+        </label>
+        <button type="button" class="primary-btn" (click)="saveSettings()">Salva preferenze</button>
+      </div>
+    </dialog>
+  }
+
+  <!-- Nuova nota -->
+  @if (noteDialogOpen()) {
+    <div class="modal-backdrop" (click)="noteDialogOpen.set(false)"></div>
+    <dialog class="modal" open aria-labelledby="note-title">
+      <header class="modal-head">
+        <h2 id="note-title"><span class="hp-dot"></span>NUOVA NOTA</h2>
+        <button type="button" class="x-btn" aria-label="Chiudi" (click)="noteDialogOpen.set(false)">×</button>
+      </header>
+      <form class="modal-body" (ngSubmit)="submitNote()">
+        <label>
+          Titolo
+          <input name="nt" [(ngModel)]="newNoteTitle" required maxlength="200" />
+        </label>
+        <label>
+          Testo
+          <textarea name="nb" rows="6" [(ngModel)]="newNoteBody" required maxlength="20000"></textarea>
+        </label>
+        <button type="submit" class="primary-btn">Salva nel vault</button>
+      </form>
+    </dialog>
+  }
+
+  <!-- Nuova attività -->
+  @if (todoDialogOpen()) {
+    <div class="modal-backdrop" (click)="todoDialogOpen.set(false)"></div>
+    <dialog class="modal" open aria-labelledby="todo-title">
+      <header class="modal-head">
+        <h2 id="todo-title"><span class="hp-dot"></span>NUOVA ATTIVITÀ</h2>
+        <button type="button" class="x-btn" aria-label="Chiudi" (click)="todoDialogOpen.set(false)">×</button>
+      </header>
+      <form class="modal-body" (ngSubmit)="submitTodo()">
+        <label>
+          Titolo
+          <input name="tt" [(ngModel)]="newTodoTitle" required maxlength="300" />
+        </label>
+        <label>
+          Priorità
+          <select name="tp" [(ngModel)]="newTodoPriority">
+            <option [ngValue]="1">1 — alta</option>
+            <option [ngValue]="2">2 — media</option>
+            <option [ngValue]="3">3 — bassa</option>
+          </select>
+        </label>
+        <button type="submit" class="primary-btn">Aggiungi</button>
+      </form>
+    </dialog>
+  }
+
+  <!-- Anteprima nota -->
+  @if (notePreviewOpen() && notePreview()) {
+    <div class="modal-backdrop" (click)="notePreviewOpen.set(false)"></div>
+    <dialog class="modal wide" open aria-labelledby="preview-title">
+      <header class="modal-head">
+        <h2 id="preview-title"><span class="hp-dot"></span>{{ notePreview()!.title }}</h2>
+        <button type="button" class="x-btn" aria-label="Chiudi" (click)="notePreviewOpen.set(false)">×</button>
+      </header>
+      <div class="modal-body">
+        <p class="mono path-box">{{ notePreview()!.path }}</p>
+        <div class="note-body" [innerHTML]="notePreview()!.body | safeMarkdown"></div>
+      </div>
+    </dialog>
+  }
+</div>

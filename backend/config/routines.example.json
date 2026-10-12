@@ -1,0 +1,38 @@
+{
+  "quiet_hours": { "start": "22:00", "end": "07:00" },
+  "missed_policy": "run_once_on_wake",
+  "routines": [
+    {
+      "id": "briefing_mattina",
+      "name": "Briefing mattutino",
+      "hour": 7,
+      "minute": 0,
+      "enabled": true,
+      "action": "briefing"
+    },
+    {
+      "id": "priorita_giorno",
+      "name": "Priorità del giorno",
+      "hour": 9,
+      "minute": 0,
+      "enabled": true,
+      "action": "daily_priorities"
+    },
+    {
+      "id": "metriche_pomeriggio",
+      "name": "Aggiornamento metriche",
+      "hour": 14,
+      "minute": 0,
+      "enabled": true,
+      "action": "metrics_update"
+    },
+    {
+      "id": "riepilogo_sera",
+      "name": "Riepilogo serale",
+      "hour": 19,
+      "minute": 0,
+      "enabled": true,
+      "action": "evening_summary"
+    }
+  ]
+}
